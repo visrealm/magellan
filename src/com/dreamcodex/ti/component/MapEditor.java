@@ -38,6 +38,7 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
     protected JButton jbtnBackMap;
     protected JButton jbtnForwMap;
     protected JButton jbtnTextCursor;
+    protected JButton jbtnLook;
     protected JButton jbtnClone;
     protected JButton jbtnUndo;
     protected JButton jbtnRedo;
@@ -91,9 +92,12 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         jcmbGridScale.addItemListener(this);
         jcmbGridScale.setToolTipText("Grid Size");
 
+        jbtnLook = getToolButton(Globals.CMD_LOOK, "Look At Character");
+        jbtnClone = getToolButton(Globals.CMD_CLONE, "Select Region To Clone");
+        jbtnFloodFillMode = getToolButton(Globals.CMD_FLOOD_FILL, "Flood fill map with active character");
+
         JButton jbtnFillSpace = getToolButton(Globals.CMD_CLEAR_CHR, "Fill map with spaces");
         JButton jbtnFillActive = getToolButton(Globals.CMD_FILL_CHR, "Fill map with active character");
-        jbtnFloodFillMode = getToolButton(Globals.CMD_FLOOD_FILL, "Flood fill map with active character");
         JButton jbtnRotateLeft = getToolButton(Globals.CMD_ROTATEL_MAP, "Rotate map left (will swap dimensions)");
         JButton jbtnRotateRight = getToolButton(Globals.CMD_ROTATER_MAP, "Rotate map right (will swap dimensions)");
         JButton jbtnFlipH = getToolButton(Globals.CMD_FLIPH_MAP, "Flip horizontal");
@@ -114,13 +118,11 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         jbtnBackMap = getToolButton(Globals.CMD_BACKMAP, "Move map backward in set");
         jbtnForwMap = getToolButton(Globals.CMD_FORWMAP, "Move map forward in set");
         jbtnTextCursor = getToolButton(Globals.CMD_TCURSOR, "Toggle text cursor display");
-        jbtnClone = getToolButton(Globals.CMD_CLONE, "Select Region To Clone");
         jbtnUndo = getToolButton(Globals.CMD_UNDO_CHR, "Undo Edit");
         jbtnUndo.setEnabled(false);
         jbtnRedo = getToolButton(Globals.CMD_REDO_CHR, "Redo Edit");
         jbtnRedo.setEnabled(false);
 
-        jbtnTextCursor.setBackground(mapCanvas.showTypeCell() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
         jlblMapNum = getLabel("", JLabel.CENTER);
         jtxtWidth = getTextField("" + gridWidth);
         jtxtHeight = getTextField("" + gridHeight);
@@ -137,9 +139,13 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         jpnlTools.add(jbtnToggleGrid);
         jpnlTools.add(jcmbGridScale);
         jpnlTools.add(new JLabel("  "));
+        jpnlTools.add(jbtnLook);
+        jpnlTools.add(jbtnClone);
+        jpnlTools.add(jbtnTextCursor);
+        jpnlTools.add(jbtnFloodFillMode);
+        jpnlTools.add(new JLabel("  "));
         jpnlTools.add(jbtnFillSpace);
         jpnlTools.add(jbtnFillActive);
-        jpnlTools.add(jbtnFloodFillMode);
         jpnlTools.add(new JLabel("  "));
         jpnlTools.add(jbtnRotateLeft);
         jpnlTools.add(jbtnRotateRight);
@@ -150,9 +156,6 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         jpnlTools.add(jbtnShiftRight);
         jpnlTools.add(jbtnShiftUp);
         jpnlTools.add(jbtnShiftDown);
-        jpnlTools.add(new JLabel("  "));
-        jpnlTools.add(jbtnTextCursor);
-        jpnlTools.add(jbtnClone);
         jpnlTools.add(new JLabel("  "));
         jpnlTools.add(jbtnAddMap);
         jpnlTools.add(jbtnPrevMap);
@@ -221,6 +224,10 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
 
     public int getGridScale() {
         return mapCanvas.getGridScale();
+    }
+
+    public JButton getLookButton() {
+        return jbtnLook;
     }
 
     public boolean isLookModeOn() {
@@ -320,18 +327,58 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
 
     public void setLookModeOn(boolean b) {
         mapCanvas.setLookModeOn(b);
+        jbtnLook.setBackground(b ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
+        if (b) {
+            setCloneModeOn(false);
+            setFloodFillMode(false);
+            setTypeCellOn(false);
+        }
+    }
+
+    public void toggleLookMode() {
+        setLookModeOn(!isLookModeOn());
     }
 
     public void setCloneModeOn(boolean b) {
         mapCanvas.setCloneModeOn(b);
+        jbtnClone.setBackground((isCloneModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL));
+        if (b) {
+            setLookModeOn(false);
+            setFloodFillMode(false);
+            setTypeCellOn(false);
+        }
     }
 
     public void toggleCloneMode() {
-        mapCanvas.toggleCloneMode();
+        setCloneModeOn(!this.isCloneModeOn());
+    }
+
+    public void setFloodFillMode(boolean b) {
+        mapCanvas.setFloodFillMode(b);
+        jbtnFloodFillMode.setBackground(b ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
+        if (b) {
+            setLookModeOn(false);
+            setCloneModeOn(false);
+            setTypeCellOn(false);
+        }
+    }
+
+    public void toggleFloodFillMode() {
+        setFloodFillMode(!this.isFloodFillModeOn());
     }
 
     public void setTypeCellOn(boolean b) {
         mapCanvas.setTypeCellOn(b);
+        jbtnTextCursor.setBackground((showTypeCell() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL));
+        if (b) {
+            setLookModeOn(false);
+            setCloneModeOn(false);
+            setFloodFillMode(false);
+        }
+    }
+
+    public void toggleTypeCell() {
+        setTypeCellOn(!showTypeCell());
     }
 
     public void setBkgrndColor(Color clr) {
@@ -700,10 +747,11 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         jlblMapNum.setText((currMap + 1) + " / " + getMapCount());
         jtxtWidth.setText("" + mapCanvas.getGridWidth());
         jtxtHeight.setText("" + mapCanvas.getGridHeight());
-        jbtnTextCursor.setBackground(mapCanvas.showTypeCell() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
-        jbtnClone.setBackground(isCloneModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
         jbtnToggleGrid.setBackground(isShowGrid() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
+        jbtnLook.setBackground(isLookModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
+        jbtnClone.setBackground(isCloneModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
         jbtnFloodFillMode.setBackground(isFloodFillModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
+        jbtnTextCursor.setBackground(showTypeCell() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL);
         updatePositionIndicator();
     }
 
@@ -807,6 +855,8 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
                 updateWidth();
             } else if (ae.getSource().equals(jtxtHeight)) {
                 updateHeight();
+            } else if (ae.getSource().equals(jbtnLook)) {
+                toggleLookMode();
             } else {
                 String command = ae.getActionCommand();
                 if (command.equals(Globals.CMD_CLEAR_CHR)) {
@@ -820,8 +870,7 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
                         updateComponents();
                     }
                 } else if (command.equals(Globals.CMD_FLOOD_FILL)) {
-                    mapCanvas.toggleFloodFillMode();
-                    updateComponents();
+                    toggleFloodFillMode();
                 } else if (command.equals(Globals.CMD_ROTATEL_MAP)) {
                     mapCanvas.rotateLeft(true);
                     jsclCanvas.revalidate();
@@ -844,14 +893,13 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
                     return;
                 } else if (command.equals(Globals.CMD_TCURSOR)) {
                     if (!mapCanvas.isSpriteMode()) {
-                        mapCanvas.toggleTextCursor();
+                        toggleTypeCell();
                         updateComponents();
                     }
                     return;
                 } else if (command.equals(Globals.CMD_CLONE)) {
                     // if (!mpCanvas.isSpriteMode()) {
                         toggleCloneMode();
-                        jbtnClone.setBackground((isCloneModeOn() ? Globals.CLR_BUTTON_ACTIVE : Globals.CLR_BUTTON_NORMAL));
                     // }
                     return;
                 } else if (command.equals(Globals.CMD_ADDMAP)) {
