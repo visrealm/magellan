@@ -623,7 +623,7 @@ public class MapEditor extends JPanel implements ItemListener, ActionListener, K
         if (name.endsWith("spr") || name.endsWith("chr")) {
             name = name.substring(0, name.length() - 3);
         }
-        String imagePath = "images/icon_" + name + ".png";
+        String imagePath = "/com/dreamcodex/ti/images/icon_" + name + ".png";
         URL imageURL = getClass().getResource(imagePath);
         return new ImageIcon(Toolkit.getDefaultToolkit().getImage(imageURL));
     }
