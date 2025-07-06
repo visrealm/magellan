@@ -1,7 +1,13 @@
 @echo off
 
 dir /s /b src\*.java > sources.txt
+
+
 javac -d out @sources.txt
+if %errorlevel% neq 0 (
+	echo %errorlevel%
+	exit /b %errorlevel%
+)
 
 xcopy /s /y /i src\com\dreamcodex\ti\images out\com\dreamcodex\ti\images
 
