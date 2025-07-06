@@ -21,6 +21,10 @@ Added features include:
 
 [Magellan thread](http://atariage.com/forums/topic/161356-magellan) at AtariAge. 
 
+## visrealm added features
+
+* CVBasic exporter
+
 ## Binary distributions
 
 Binary distributions can be found [here](http://magellan.js99er.net/).
