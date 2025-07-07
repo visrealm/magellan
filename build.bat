@@ -10,6 +10,7 @@ if %errorlevel% neq 0 (
 )
 
 xcopy /s /y /i src\com\dreamcodex\ti\images out\com\dreamcodex\ti\images
+xcopy /s /y /i src\com\dreamcodex\ti\component\images out\com\dreamcodex\ti\images
 
 pushd out
 jar cfe Magellan.jar com.dreamcodex.ti.Magellan -C . com
