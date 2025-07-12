@@ -22,16 +22,16 @@ public class ExportCVBasicDataFileAction extends FileAction {
     public void actionPerformed(ActionEvent evt) {
         MagellanExportDialog exportDialog = new MagellanExportDialog(MagellanExportDialog.TYPE_ASM, parent, parent, preferences);
         if (exportDialog.isOkay()) {
-            File file = getFileFromChooser(preferences.getCurrentDirectory(), JFileChooser.SAVE_DIALOG, XBEXTS, "CVBasic Source Files");
+            File file = getFileFromChooser(preferences.getCurrentDirectory(), JFileChooser.SAVE_DIALOG, CVBEXTS, "CVBasic Source Files");
             if (file != null) {
                 boolean isExtensionAdded = false;
-                for (String extension : XBEXTS) {
+                for (String extension : CVBEXTS) {
                     if (file.getAbsolutePath().toLowerCase().endsWith("." + extension)) {
                         isExtensionAdded = true;
                     }
                 }
                 if (!isExtensionAdded) {
-                    file = new File(file.getAbsolutePath() + "." + ASMEXT);
+                    file = new File(file.getAbsolutePath() + "." + CVBEXT);
                 }
                 int sChar = exportDialog.getStartChar();
                 int eChar = exportDialog.getEndChar();

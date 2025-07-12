@@ -5,618 +5,758 @@ import com.dreamcodex.ti.component.MapCanvas;
 import com.dreamcodex.ti.component.MapEditor;
 import com.dreamcodex.ti.util.*;
 
-import java.awt.*;
+import java.awt.Color;
+import java.awt.Point;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
-import java.util.List;
 
 import static com.dreamcodex.ti.Magellan.*;
 import static com.dreamcodex.ti.util.ColorMode.*;
 
 public class CVBasicDataFileExporter extends Exporter {
+    private final StringBuilder lineBuffer = new StringBuilder();
 
     public CVBasicDataFileExporter(MapEditor mapEditor, DataSet dataSet, Preferences preferences) {
         super(mapEditor, dataSet, preferences);
     }
 
-    public void writeCVBasicDataFile(File mapDataFile, Preferences preferences) throws Exception{
-        writeCVBasicDataFile(mapDataFile, preferences.getDefStartChar(), preferences.getDefEndChar(), preferences.getDefStartSprite(), preferences.getDefEndSprite(), preferences.getCompression(), preferences.isExportComments(), preferences.isCurrentMapOnly(), preferences.isIncludeCharNumbers(), preferences.isIncludeCharData(), preferences.isIncludeSpriteData(), preferences.isIncludeColorData(), preferences.isIncludeMapData());
+    public void writeCVBasicDataFile(File mapDataFile, Preferences preferences) throws Exception {
+        writeCVBasicDataFile(
+            mapDataFile,
+            preferences.getDefStartChar(),
+            preferences.getDefEndChar(),
+            preferences.getDefStartSprite(),
+            preferences.getDefEndSprite(),
+            preferences.getCompression(),
+            preferences.isExportComments(),
+            preferences.isCurrentMapOnly(),
+            preferences.isIncludeCharNumbers(),
+            preferences.isIncludeCharData(),
+            preferences.isIncludeSpriteData(),
+            preferences.isIncludeColorData(),
+            preferences.isIncludeMapData()
+        );
     }
 
-    public void writeCVBasicDataFile(File mapDataFile, int startChar, int endChar, int startSprite, int endSprite, int compression, boolean includeComments, boolean currMapOnly, boolean includeCharNumbers, boolean includeCharData, boolean includeSpriteData, boolean includeColorData, boolean includeMapData) throws Exception {
-        if ((compression == MagellanExportDialog.COMPRESSION_RLE_BYTE || compression == MagellanExportDialog.COMPRESSION_RLE_WORD) && endChar > 127) {
+    public void writeCVBasicDataFile(
+        File mapDataFile,
+        int startChar, int endChar,
+        int startSprite, int endSprite,
+        int compression,
+        boolean includeComments,
+        boolean currMapOnly,
+        boolean includeCharNumbers,
+        boolean includeCharData,
+        boolean includeSpriteData,
+        boolean includeColorData,
+        boolean includeMapData
+    ) throws Exception {
+        // Validate RLE constraints
+        if ((compression == MagellanExportDialog.COMPRESSION_RLE_BYTE ||
+             compression == MagellanExportDialog.COMPRESSION_RLE_WORD) &&
+            endChar > 127) {
             throw new Exception("RLE Compression not supported for characters > 127.");
         }
+
         mapEditor.storeCurrentMap();
         Map<ECMPalette, Integer> paletteMap = buildECMPaletteMap();
-        BufferedWriter bw = new BufferedWriter(new FileWriter(mapDataFile));
-        StringBuilder sbLine = new StringBuilder();
-        if (includeColorData) {
-            writeColors(startChar, endChar, includeComments, includeCharNumbers, paletteMap, sbLine, bw);
+
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(mapDataFile))) {
+            if (includeCharData) {
+                writeCharacterPatterns(startChar, endChar, includeComments, includeCharNumbers, bw);
+            }
+            if (includeColorData) {
+                writeColors(startChar, endChar, includeComments, includeCharNumbers, paletteMap, bw);
+            }
+            if (includeSpriteData) {
+                writeSpritePatterns(startSprite, endSprite, includeComments, bw);
+            }
+            if (includeMapData) {
+                writeMapData(compression, includeComments, currMapOnly, includeSpriteData, paletteMap, bw);
+            }
+
+            bw.flush();
         }
-        if (includeCharData) {
-            writeCharacterPatterns(startChar, endChar, includeComments, includeCharNumbers, sbLine, bw);
-        }
-        if (includeSpriteData) {
-            writeSpriteData(startSprite, endSprite, includeComments, includeSpriteData, sbLine, bw);
-        }
-        if (includeMapData) {
-            writeMapData(compression, includeComments, currMapOnly, includeSpriteData, paletteMap, sbLine, bw);
-        }
-        bw.flush();
-        bw.close();
     }
 
+    // Build palette index map
     private Map<ECMPalette, Integer> buildECMPaletteMap() {
-        Map<ECMPalette, Integer> paletteMap = new HashMap<>(16);
-        {
-            int n = 0;
-            for (ECMPalette ecmPalette : ecmPalettes) {
-                paletteMap.put(ecmPalette, n++);
-            }
+        Map<ECMPalette, Integer> map = new HashMap<>(ecmPalettes.length);
+        int idx = 0;
+        for (ECMPalette p : ecmPalettes) {
+            map.put(p, idx++);
         }
-        return paletteMap;
+        return map;
     }
 
-    private void printLine(BufferedWriter bw, String line) throws IOException
-    {
-        printLine(bw, line, true);
+    // ---------- Generic Print Helpers ----------
+
+    private void printLine(BufferedWriter bw, String text) throws IOException {
+        printLine(bw, text, true);
     }
-    private void printLine(BufferedWriter bw, String line, String comments) throws IOException
-    {
-        if (comments == null || comments.isEmpty())
-            printLine(bw, line, true);
-        else
-            printLine(bw, line + " ' " + comments, true);
+
+    private void printLine(BufferedWriter bw, String text, String comment) throws IOException {
+        if (comment == null || comment.isEmpty()) {
+            printLine(bw, text, true);
+        } else {
+            printLine(bw, text + " ' " + comment, true);
+        }
     }
-    private void printLine(BufferedWriter bw, String line, boolean isCommand) throws IOException
-    {
+
+    private void printLine(BufferedWriter bw, String text, boolean isCommand) throws IOException {
         if (!isCommand) bw.write("' ");
-        bw.write(line);
-        bw.newLine();        
+        bw.write(text);
+        bw.newLine();
     }
 
-    private void writeColors(int startChar, int endChar, boolean includeComments, boolean includeCharNumbers, Map<ECMPalette, Integer> paletteMap, StringBuilder sbLine, BufferedWriter bw) throws IOException {
-        if (includeComments) {
-            printLine(bw, "****************************************", false);
-            printLine(bw, "* Colorset Definitions", false);
-            printLine(bw, "****************************************", false);
+    private void printSectionHeader(BufferedWriter bw, String title) throws IOException {
+        printLine(bw, "----------------------------------------", false);
+        printLine(bw, title, false);
+        printLine(bw, "----------------------------------------", false);
+    }
+
+    /**
+     * Appends one byte to the current line buffer.
+     * If label!=null, flushes any existing buffer and starts a fresh line.
+     * Returns updated count of bytes on this line.
+     */
+    @Override
+    protected int printByte(BufferedWriter bw, StringBuilder buf, int countOnLine, int value, String label) throws IOException {
+        if (label != null) {
+            // flush prior
+            if (buf.length() > 0) {
+                printLine(bw, buf.toString(), false);
+                buf.setLength(0);
+            }
+            buf.append(label)
+               .append(":  DATA BYTE $")
+               .append(Globals.toHexString(value & 0xFF, 2));
+            countOnLine = 1;
+        } else {
+            if (countOnLine == 0) {
+                buf.append("       DATA BYTE $")
+                   .append(Globals.toHexString(value & 0xFF, 2));
+            } else {
+                buf.append(", $")
+                   .append(Globals.toHexString(value & 0xFF, 2));
+            }
+            countOnLine++;
         }
-        if (colorMode == COLOR_MODE_GRAPHICS_1) {
-            int itemCount = 0;
-            printLine(bw, "CLRNUM:");
-            printLine(bw, "DATA BYTE " + (clrSets.length));
-            for (int i = 0; i < clrSets.length; i++) {
-                if (itemCount == 0) {
-                    if (i == 0) {
-                        sbLine.append("CLRSET BYTE ");
-                    }
-                    else {
-                        sbLine.append("       BYTE ");
-                    }
-                }
-                if (itemCount > 0) {
-                    sbLine.append(",");
-                }
-                sbLine.append("$");
-                sbLine.append(Integer.toHexString(clrSets[i][Globals.INDEX_CLR_FORE]).toUpperCase());
-                sbLine.append(Integer.toHexString(clrSets[i][Globals.INDEX_CLR_BACK]).toUpperCase());
-                itemCount++;
-                if (itemCount > 3) {
-                    printLine(bw, sbLine.toString(), includeComments);
-                    sbLine.delete(0, sbLine.length());
-                    itemCount = 0;
-                }
+        return countOnLine;
+    }
+
+    // ---------- Color Data ----------
+
+private void writeColors(
+    int startChar,
+    int endChar,
+    boolean includeComments,
+    boolean includeCharNumbers,
+    Map<ECMPalette,Integer> paletteMap,
+    BufferedWriter bw
+) throws IOException {
+    // Section header
+    if (includeComments) {
+        printSectionHeader(bw, " Colorset Definitions");
+    }
+
+    // Graphics Mode 1: single combined foreground/background sets
+    if (colorMode == COLOR_MODE_GRAPHICS_1) {
+        // Count of color‐sets
+        printLine(bw, "CLRNUM:  DATA BYTE " + clrSets.length, includeComments);
+
+        // Dump in groups of four
+        int cnt = 0;
+        for (int i = 0; i < clrSets.length; i++) {
+            if (cnt == 0) {
+                lineBuffer.setLength(0);
+                lineBuffer.append(i == 0 ? "CLRSET BYTE " : "       BYTE ");
             }
-        }
-        else if (colorMode == COLOR_MODE_BITMAP) {
-            sbLine.delete(0, sbLine.length());
-            for (int i = startChar; i <= endChar; i++) {
-                int[][] charColors = this.charColors.get(i);
-                if (charColors != null) {
-                    if (includeCharNumbers) {
-                        printLine(bw, "CCH" + i + ":");
-                        printLine(bw, "  DATA BYTE " + i);
-                    }
-                    sbLine.append("COL").append(i).append(":\n  DATA BYTE ");
-                    for (int row = 0; row < 8; row += 2) {
-                        sbLine.append("$");
-                        int[] rowColors = charColors[row];
-                        sbLine.append(Integer.toHexString(rowColors[1]).toUpperCase());
-                        sbLine.append(Integer.toHexString(rowColors[0]).toUpperCase());
-                        rowColors = charColors[row + 1];
-                        sbLine.append(", $");
-                        sbLine.append(Integer.toHexString(rowColors[1]).toUpperCase());
-                        sbLine.append(Integer.toHexString(rowColors[0]).toUpperCase());
-                        if (row < 6) {
-                            sbLine.append(", ");
-                        }
-                    }
-                    printLine(bw, sbLine.toString());
-                    sbLine.delete(0, sbLine.length());
-                }
-            }
-        }
-        else if (colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3) {
-            sbLine.delete(0, sbLine.length());
-            for (int i = 0; i < ecmPalettes.length; i++) {
-                ECMPalette ecmPalette = ecmPalettes[i];
-                for (int l = 0; l < ecmPalette.getSize() / 4; l++) {
-                    if (l == 0) {
-                        sbLine.append("PAL").append(i).append(":\n  DATA BYTE ");
-                    }
-                    else {
-                        sbLine.append("  DATA BYTE ");
-                    }
-                    for (int c = 0; c < 4; c++) {
-                        Color color = ecmPalette.getColor(c + l * 4);
-                        sbLine.append("$0");
-                        sbLine.append(Integer.toHexString((int) Math.round((double) color.getRed() / 17)).toUpperCase());
-                        sbLine.append(Integer.toHexString((int) Math.round((double) color.getGreen() / 17)).toUpperCase());
-                        sbLine.append(Integer.toHexString((int) Math.round((double) color.getBlue() / 17)).toUpperCase());
-                        if (c < 3) {
-                            sbLine.append(",");
-                        }
-                    }
-                    printLine(bw, sbLine.toString(), includeComments);
-                    sbLine.delete(0, sbLine.length());
-                }
-            }
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Tile Attributes", false);
-                printLine(bw, "****************************************", false);
-            }
-            sbLine.delete(0, sbLine.length());
-            for (int i = startChar; i <= endChar; i++) {
-                sbLine.append("TAT").append(i).append(":\n  ");
-                sbLine.append("  DATA BYTE $").append(Globals.toHexString((paletteMap.get(ecmCharPalettes[i]) << (colorMode == COLOR_MODE_ECM_3 ? 1 : 0)) | (ecmCharTransparency[i] ? 0x10 : 0), 2));
-                printLine(bw, sbLine.toString(), includeComments);
-                sbLine.delete(0, sbLine.length());
+            if (cnt > 0) lineBuffer.append(", ");
+            // two nibbles: fore, back
+            lineBuffer.append('$')
+                      .append(Integer.toHexString(
+                          clrSets[i][Globals.INDEX_CLR_FORE]).toUpperCase())
+                      .append(Integer.toHexString(
+                          clrSets[i][Globals.INDEX_CLR_BACK]).toUpperCase());
+            cnt++;
+            if (cnt > 3) {
+                printLine(bw, lineBuffer.toString(), includeComments);
+                cnt = 0;
             }
         }
-        if (sbLine.length() > 0) {
-            printLine(bw, sbLine.toString(), includeComments);
-            sbLine.delete(0, sbLine.length());
+        // flush any remainder
+        if (cnt > 0) {
+            printLine(bw, lineBuffer.toString(), includeComments);
         }
     }
 
-    private void writeCharacterPatterns(int startChar, int endChar, boolean includeComments, boolean includeCharNumbers, StringBuilder sbLine, BufferedWriter bw) throws IOException {
-        if (includeComments) {
-            printLine(bw, "****************************************", false);
-            printLine(bw, "* Character Patterns" + (colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3 ? " Plane 0" : ""), false);
-            printLine(bw, "****************************************", false);
-        }
-        sbLine.delete(0, sbLine.length());
-        for (int i = startChar; i <= endChar; i++) {
-            String hexstr = Globals.BLANKCHAR;
-            if (charGrids.get(i) != null) {
-                hexstr = Globals.getHexString(charGrids.get(i)).toUpperCase();
-            }
+    // Bitmap mode: per-character two-row color pairs
+    else if (colorMode == COLOR_MODE_BITMAP) {
+        for (int ci = startChar; ci <= endChar; ci++) {
+            int[][] cols = charColors.get(ci);
+            if (cols == null) continue;
+
             if (includeCharNumbers) {
-                printLine(bw, "PCH" + i + ":\n  DATA BYTE " + i, includeComments);
+                printLine(bw,
+                    "CCH" + ci + ":  DATA BYTE " + ci,
+                    includeComments);
             }
-            sbLine.append(colorMode == COLOR_MODE_GRAPHICS_1 || colorMode == COLOR_MODE_BITMAP ? "PAT" : "P0_").append(i).append(":\n  DATA BYTE ");
-                for (int pos = 0; pos < 16; pos += 2) {
-                    sbLine.append("$").append(hexstr, pos, pos + 2);
-                    if (pos < 14) sbLine.append(", ");
-                }
-            printLine(bw, sbLine.toString(), includeComments);
-            sbLine.delete(0, sbLine.length());
-        }
-        if (colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3) {
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Character Patterns Plane 1", false);
-                printLine(bw, "****************************************", false);
+
+            lineBuffer.setLength(0);
+            lineBuffer.append("COL").append(ci).append(":  DATA BYTE ");
+            for (int row = 0; row < 8; row += 2) {
+                int[] a = cols[row], b = cols[row + 1];
+                // each pair is $backFore
+                lineBuffer.append('$')
+                          .append(Integer.toHexString(a[1]).toUpperCase())
+                          .append(Integer.toHexString(a[0]).toUpperCase())
+                          .append(", $")
+                          .append(Integer.toHexString(b[1]).toUpperCase())
+                          .append(Integer.toHexString(b[0]).toUpperCase());
+                if (row < 6) lineBuffer.append(", ");
             }
-            for (int i = startChar; i <= endChar; i++) {
-                String hexstr = Globals.BLANKCHAR;
-                if (charGrids.get(i) != null) {
-                    hexstr = Globals.getHexString(charGrids.get(i), 2).toUpperCase();
-                }
-                sbLine.append("P1_").append(i).append(":\n  DATA BYTE ");
-                for (int pos = 0; pos < 16; pos += 2) {
-                    sbLine.append("$").append(hexstr, pos, pos + 2);
-                    if (pos < 14) sbLine.append(", ");
-                }
-                printLine(bw, sbLine.toString(), includeComments);
-                sbLine.delete(0, sbLine.length());
-            }
-        }
-        if (colorMode == COLOR_MODE_ECM_3) {
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Character Patterns Plane 2", false);
-                printLine(bw, "****************************************", false);
-            }
-            for (int i = startChar; i <= endChar; i++) {
-                String hexstr = Globals.BLANKCHAR;
-                if (charGrids.get(i) != null) {
-                    hexstr = Globals.getHexString(charGrids.get(i), 4).toUpperCase();
-                }
-                sbLine.append("P2_").append(i).append(":\n  DATA BYTE ");
-                for (int pos = 0; pos < 16; pos += 2) {
-                    sbLine.append("$").append(hexstr, pos, pos + 2);
-                    if (pos < 14) sbLine.append(", ");
-                }
-                printLine(bw, sbLine.toString(), includeComments);
-                sbLine.delete(0, sbLine.length());
-            }
+            printLine(bw, lineBuffer.toString(), null);
         }
     }
 
-    private void writeSpriteData(int startSprite, int endSprite, boolean includeComments, boolean includeSpriteData, StringBuilder sbLine, BufferedWriter bw) throws IOException {
+    // ECM-2 / ECM-3: multi-plane palette blocks + per-char tile attributes
+    else if (colorMode == COLOR_MODE_ECM_2
+          || colorMode == COLOR_MODE_ECM_3) {
+
+        // 1) Emit each palette in 4-color chunks
+        for (int pi = 0; pi < ecmPalettes.length; pi++) {
+            ECMPalette pal = ecmPalettes[pi];
+            int planes = pal.getSize() / 4;
+            for (int block = 0; block < planes; block++) {
+                lineBuffer.setLength(0);
+                lineBuffer.append(
+                    block == 0
+                      ? "PAL" + pi + ":  DATA BYTE "
+                      : "       DATA BYTE "
+                );
+                for (int c = 0; c < 4; c++) {
+                    Color col = pal.getColor(block * 4 + c);
+                    int r = (int)Math.round(col.getRed() / 17.0);
+                    int g = (int)Math.round(col.getGreen() / 17.0);
+                    int b = (int)Math.round(col.getBlue() / 17.0);
+                    lineBuffer.append("$0")
+                              .append(Integer.toHexString(r).toUpperCase())
+                              .append(Integer.toHexString(g).toUpperCase())
+                              .append(Integer.toHexString(b).toUpperCase())
+                              .append(c < 3 ? ", " : "");
+                }
+                printLine(bw, lineBuffer.toString(), null);
+            }
+        }
+
+        // 2) Emit per-char palette index + transparency
         if (includeComments) {
-            printLine(bw, "****************************************", false);
-            printLine(bw, "* Sprite Patterns" + (colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3 ? " Plane 0" : ""), false);
-            printLine(bw, "****************************************", false);
+            printSectionHeader(bw, " Tile Attributes");
         }
-        sbLine.delete(0, sbLine.length());
-        for (int i = startSprite; i <= endSprite; i++) {
-            if (spriteGrids.get(i) != null) {
-                String hexstr = Globals.getSpriteHexString(spriteGrids.get(i)).toUpperCase();
-                sbLine.append(colorMode == COLOR_MODE_GRAPHICS_1 || colorMode == COLOR_MODE_BITMAP ? "SPR" : "S0_").append(i).append(":\n  DATA BYTE ");
-                for (int pos = 0; pos < 64; pos += 2) {
-                    if (pos > 0 && pos % 16 == 0) {
-                        sbLine.append("  DATA BYTE ");
-                    }
-                    sbLine.append("$").append(hexstr, pos, pos + 2).append(pos % 16 != 14 ? "," : "");
-                    if (pos % 16 == 14) {
-                        printLine(bw, sbLine.toString(), includeComments ? (pos == 14 ? "Color " + spriteColors[i] : "") : null);
-                        sbLine.delete(0, sbLine.length());
-                    }
-                }
+        for (int ci = startChar; ci <= endChar; ci++) {
+            int palIdx = paletteMap.get(ecmCharPalettes[ci]);
+            int attr = (palIdx << (colorMode == COLOR_MODE_ECM_3 ? 1 : 0))
+                       | (ecmCharTransparency[ci] ? 0x10 : 0);
+            printLine(bw,
+                "TAT" + ci + ":  DATA BYTE $"
+                + Globals.toHexString(attr, 2),
+                null);
+        }
+    }
+
+    printLine(bw, "", null);
+}
+
+    // ---------- Character Patterns ----------
+
+    private void writeCharacterPatterns(
+        int startChar, int endChar,
+        boolean includeComments, boolean includeCharNumbers,
+        BufferedWriter bw
+    ) throws IOException {
+        String header = " Character Patterns"
+                        + ((colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3)
+                           ? " Plane 0" : "");
+        if (includeComments) printSectionHeader(bw, header);
+
+        // Plane 0 (or only plane)
+        for (int ci = startChar; ci <= endChar; ci++) {
+            String hex = charGrids.get(ci) == null
+                         ? Globals.BLANKCHAR
+                         : Globals.getHexString(charGrids.get(ci)).toUpperCase();
+            if (includeCharNumbers) {
+                printLine(bw, "PCH" + ci + ":  DATA BYTE " + ci, null);
             }
+            String label = (colorMode == COLOR_MODE_GRAPHICS_1 || colorMode == COLOR_MODE_BITMAP)
+                           ? "PAT" + ci : "P0_" + ci;
+            writeHexChunks(bw, label, hex, includeComments, 16, 16, null);
         }
+
+        // Plane 1 (ECM 2+)
         if (colorMode == COLOR_MODE_ECM_2 || colorMode == COLOR_MODE_ECM_3) {
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Sprite Patterns Plane 1", false);
-                printLine(bw, "****************************************", false);
-            }
-            sbLine.delete(0, sbLine.length());
-            for (int i = startSprite; i <= endSprite; i++) {
-                if (spriteGrids.get(i) != null) {
-                    String hexstr = Globals.getSpriteHexString(spriteGrids.get(i), 2).toUpperCase();
-                    sbLine.append("S1_").append(i).append(":\n  DATA BYTE ");
-                    for (int pos = 0; pos < 64; pos += 2) {
-                        if (pos > 0 && pos % 16 == 0) {
-                            sbLine.append("       DATA BYTE ");
-                        }
-                        sbLine.append("$").append(hexstr, pos, pos + 2).append(pos % 14 != 12 ? "," : "");
-                        if (pos % 14 == 12) {
-                            printLine(bw, sbLine.toString(), includeComments);
-                            sbLine.delete(0, sbLine.length());
-                        }
-                    }
-                }
+            if (includeComments) printSectionHeader(bw, " Character Patterns Plane 1");
+            for (int ci = startChar; ci <= endChar; ci++) {
+                String hex = charGrids.get(ci) == null
+                             ? Globals.BLANKCHAR
+                             : Globals.getHexString(charGrids.get(ci), 2).toUpperCase();
+                writeHexChunks(bw, "P1_" + ci, hex, includeComments, 16, 16, null);
             }
         }
+
+        // Plane 2 (ECM3)
         if (colorMode == COLOR_MODE_ECM_3) {
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Sprite Patterns Plane 2", false);
-                printLine(bw, "****************************************", false);
+            if (includeComments) printSectionHeader(bw, " Character Patterns Plane 2");
+            for (int ci = startChar; ci <= endChar; ci++) {
+                String hex = charGrids.get(ci) == null
+                             ? Globals.BLANKCHAR
+                             : Globals.getHexString(charGrids.get(ci), 4).toUpperCase();
+                writeHexChunks(bw, "P2_" + ci, hex, includeComments, 16, 16, null);
             }
-            sbLine.delete(0, sbLine.length());
-            for (int i = startSprite; i <= endSprite; i++) {
-                if (spriteGrids.get(i) != null) {
-                    String hexstr = Globals.getSpriteHexString(spriteGrids.get(i), 4).toUpperCase();
-                    sbLine.append("S2_").append(i).append(":\n  DATA BYTE ");
-                    for (int pos = 0; pos < 64; pos += 2) {
-                        if (pos > 0 && pos % 16 == 0) {
-                            sbLine.append("  DATA BYTE ");
-                        }
-                        sbLine.append("$").append(hexstr, pos, pos + 2).append(pos % 16 != 12 ? "," : "");
-                        if (pos % 16 == 12) {
-                            printLine(bw, sbLine.toString(), includeComments);
-                            sbLine.delete(0, sbLine.length());
-                        }
-                    }
-                }
+        }
+        printLine(bw, "", null);
+    }
+
+    // ---------- Sprite Patterns ----------
+
+    private void writeSpritePatterns(
+        int startSprite, int endSprite,
+        boolean includeComments,
+        BufferedWriter bw
+    ) throws IOException {
+        int planes = (colorMode == COLOR_MODE_ECM_3) ? 3
+                   : (colorMode == COLOR_MODE_ECM_2) ? 2
+                   : 1;
+        String[] prefixes = { "SPR", "S1_", "S2_" };
+
+        for (int pl = 0; pl < planes; pl++) {
+            String title = " Sprite Patterns"
+                           + (pl > 0 ? " Plane " + pl : "");
+            if (includeComments) printSectionHeader(bw, title);
+
+            for (int si = startSprite; si <= endSprite; si++) {
+                int[][] grid = spriteGrids.get(si);
+                if (grid == null) continue;
+                String hex = Globals.getSpriteHexString(grid, (int)Math.pow(2, pl))
+                                     .toUpperCase();
+                String label = prefixes[pl] + si;
+                writeHexChunks(bw, label, hex, includeComments, 64, 16,
+                               (pl == 0 && includeComments) ? "Color " + spriteColors[si] : null);
+            }
+        }
+        printLine(bw, "", null);
+    }
+
+    // ---------- Map Data ----------
+
+    private void writeMapData(
+        int compression,
+        boolean includeComments,
+        boolean currMapOnly,
+        boolean includeSpriteData,
+        Map<ECMPalette, Integer> paletteMap,
+        BufferedWriter bw
+    ) throws Exception {
+        if (includeComments) printSectionHeader(bw, "Map Data");
+        int mapCount = currMapOnly ? 1 : mapEditor.getMapCount();
+        printLine(bw, "MCOUNT:  DATA BYTE " + mapCount, null);
+
+        for (int mid = 0; mid < mapEditor.getMapCount(); mid++) {
+            if (currMapOnly && mid != mapEditor.getCurrentMapId()) continue;
+
+            int[][] mapGrid = mapEditor.getMapData(mid);
+            if (includeComments) {
+                printLine(bw, " == Map #" + mid + " ==", false);
+            }
+            printLine(bw, "MC" + mid + ":  DATA BYTE " + mapEditor.getScreenColor(mid),
+                      null);
+
+            // dimensions
+            lineBuffer.setLength(0);
+            lineBuffer.append("MS").append(mid).append(":  DATA $")
+                      .append(Globals.toHexString(mapGrid[0].length, 4))
+                      .append(", $").append(Globals.toHexString(mapGrid.length, 4))
+                      .append(", $").append(Globals.toHexString(
+                          mapGrid.length * mapGrid[0].length, 4));
+            printLine(bw, lineBuffer.toString(),
+                      new String(includeComments ? "Width, Height, Size" : ""));
+            lineBuffer.setLength(0);
+
+            // data
+            if (compression == MagellanExportDialog.COMPRESSION_NONE) {
+                writeMapRows(mapGrid, mid, bw, includeComments);
+            }
+            else if (compression == MagellanExportDialog.COMPRESSION_RLE_BYTE) {
+                writeRleByteData(mapGrid, mid, bw);
+            }
+            else if (compression == MagellanExportDialog.COMPRESSION_RLE_WORD) {
+                writeRleWordData(mapGrid, mid, bw);
+            }
+            else if (compression == MagellanExportDialog.COMPRESSION_META_2
+                  || compression == MagellanExportDialog.COMPRESSION_META_4
+                  || compression == MagellanExportDialog.COMPRESSION_META_8) {
+                int size = (compression == MagellanExportDialog.COMPRESSION_META_2) ? 2
+                        : (compression == MagellanExportDialog.COMPRESSION_META_4) ? 4 : 8;
+                writeMetaTileData(size, mapGrid, mid, bw, includeComments);
+            }
+            else if (compression == MagellanExportDialog.COMPRESSION_NYBBLES) {
+                writeNybblesData(mapGrid, mid, bw, includeComments);
+            }
+            else {
+                throw new RuntimeException("Unsupported compression mode: " + compression);
+            }
+            printLine(bw, "", null);
+
+            // sprite locations
+            if (includeSpriteData) {
+                writeSpriteLocations(includeComments, paletteMap, bw, mid);
             }
         }
     }
 
-    private void writeMapData(int compression, boolean includeComments, boolean currMapOnly, boolean includeSpriteData, Map<ECMPalette, Integer> paletteMap, StringBuilder sbLine, BufferedWriter bw) throws Exception {
-        if (includeComments) {
-            printLine(bw, "****************************************", false);
-            printLine(bw, "* Map Data", false);
-            printLine(bw, "****************************************", false);
-        }
-        printLine(bw, "MCOUNT:\n  DATA BYTE " + (currMapOnly ? 1 : mapEditor.getMapCount()), includeComments);
-        for (int m = 0; m < mapEditor.getMapCount(); m++) {
-            if (!currMapOnly || m == mapEditor.getCurrentMapId()) {
-                int[][] mapToSave = mapEditor.getMapData(m);
-                if (includeComments) {
-                    printLine(bw, "* == Map #" + m + " == ", false);
+    private void writeMapRows(
+        int[][] grid, int mapId,
+        BufferedWriter bw, boolean includeComments
+    ) throws IOException {
+        for (int y = 0; y < grid.length; y++) {
+            int rowLen = grid[y].length;
+            for (int block = 0; block < Math.ceil((double) rowLen / 8); block++) {
+                lineBuffer.setLength(0);
+                String label = (y == 0 && block == 0) ? "MD" + mapId : "";
+                lineBuffer.append(label)
+                          .append(label.isEmpty() ? "    " : ":")
+                          .append("  DATA BYTE ");
+                for (int x = block * 8; x < Math.min((block + 1) * 8, rowLen); x++) {
+                    int v = grid[y][x];
+                    if (v == MapCanvas.NOCHAR) v = 0;
+                    lineBuffer.append("$")
+                              .append(Globals.toHexString(v & 0xFF, 2))
+                              .append(x < (block + 1) * 8 - 1 ? ", " : "");
                 }
-                printLine(bw, "MC" + m + ":\n  DATA BYTE " + mapEditor.getScreenColor(m), includeComments);
-                sbLine.delete(0, sbLine.length());
-                sbLine.append("MS").append(m).append(":\n  DATA $");
-                sbLine.append(Globals.toHexString(mapToSave[0].length, 4));
-                sbLine.append(", $").append(Globals.toHexString(mapToSave.length, 4));
-                sbLine.append(", $").append(Globals.toHexString(mapToSave[0].length * mapToSave.length, 4));
-                printLine(bw, sbLine.toString(), includeComments ? "Width, Height, Size" : null);
-                sbLine.delete(0, sbLine.length());
-                if (compression == MagellanExportDialog.COMPRESSION_NONE) {
-                    boolean isByteContent = Globals.isByteGrid(mapToSave);
-                    boolean isFirstByte;
-                    isFirstByte = true;
-                    for (int y = 0; y < mapToSave.length; y++) {
-                        if (includeComments) {
-                            printLine(bw, "* -- Map Row " + y + " -- ", false);
-                        }
-                        int rowLength = mapToSave[y].length;
-                        boolean useBytes = true;//rowLength % 2 == 1 && isByteContent;
-                        String directive = useBytes ? "  DATA BYTE" : "DATA";
-                        for (int cl = 0; cl < Math.ceil((double) rowLength / 8); cl++) {
-                            if (y == 0 && cl == 0) {
-                                sbLine.append("MD").append(m).append(":\n").append(directive).append(" ");
-                            }
-                            else {
-                                sbLine.append(directive).append("  ");
-                            }
-                            for (int colpos = (cl * 8); colpos < Math.min((cl + 1) * 8, rowLength); colpos++) {
-                                if (isFirstByte) {
-                                    if (colpos > (cl * 8)) {
-                                        sbLine.append(", ");
-                                    }
-                                    sbLine.append("$");
-                                }
-                                int value = mapToSave[y][colpos];
-                                if (value == MapCanvas.NOCHAR) {
-                                    value = 0;
-                                }
-                                sbLine.append(Globals.toHexString(value & 0xff, 2));
-                                if (!useBytes && isByteContent) {
-                                    isFirstByte = !isFirstByte;
-                                }
-                            }
-                            printLine(bw, sbLine.toString(), includeComments);
-                            sbLine.delete(0, sbLine.length());
-                        }
-                    }
+                if (includeComments && (block % 4) == 0) {
+                    lineBuffer.append(" ' Map Row " + y);
                 }
-                else if (compression == MagellanExportDialog.COMPRESSION_RLE_BYTE) {
-                    // RLE compression (byte)
-                    // We assume all characters are < 128. If msb is set, the next byte determines
-                    // how many times (2 - 256) the current byte (with msb cleared) should be repeated.
-                    // A repeat count of 0 is used as end marker.
-                    System.out.println("Uncompressed size: " + (mapToSave.length * mapToSave[0].length));
-                    int i = 0;
-                    int n = 0;
-                    int last = -1;
-                    int count = 0;
-                    for (int[] row : mapToSave) {
-                        for (int current : row) {
-                            if (last != -1) {
-                                if (current == last && count < 255) {
-                                    // Same byte, increment count
-                                    count++;
-                                } else if (count > 0) {
-                                    // End of run of bytes
-                                    i = printByte(bw, sbLine, i, last | 128);
-                                    i = printByte(bw, sbLine, i, count);
-                                    count = 0;
-                                    n += 2;
-                                } else {
-                                    // Different byte
-                                    i = printByte(bw, sbLine, i, last);
-                                    n++;
-                                }
-                            }
-                            last = current;
-                        }
-                    }
-                    if (count > 0) {
-                        i = printByte(bw, sbLine, i, last | 128);
-                        i = printByte(bw, sbLine, i, count);
-                        n += 2;
-                    }
-                    else {
-                        // Different byte
-                        i = printByte(bw, sbLine, i, last);
-                        n++;
-                    }
-                    // End marker
-                    i = printByte(bw, sbLine, i, 128);
-                    i = printByte(bw, sbLine, i, 0);
-                    n += 2;
-                    printLine(bw, sbLine.toString(), false);
-                    n += i;
-                    System.out.println("Compressed size: " + n);
-                }
-                else if (compression == MagellanExportDialog.COMPRESSION_RLE_WORD) {
-                    // RLE compression (word)
-                    // We assume all characters are < 128. If msb of the MSB is set, the byte following the
-                    // current word determines how many times (2 - 256) the current word (with msb cleared)
-                    // should be repeated. A repeat count of 0 is used as end marker.
-                    System.out.println("Uncompressed size: " + (mapToSave.length * mapToSave[0].length));
-                    int i = 0;
-                    int n = 0;
-                    int current;
-                    int last = -1;
-                    int count = 0;
-                    for (int[] row : mapToSave) {
-                        for (int x = 0; x < mapToSave[0].length - 1; x += 2) {
-                            current = row[x] << 8 | row[x + 1];
-                            if (last != -1) {
-                                if (current == last && count < 255) {
-                                    // Same word, increment count
-                                    count++;
-                                } else if (count > 0) {
-                                    // End of run of words
-                                    i = printByte(bw, sbLine, i, (last & 0xFF00) >> 8 | 128);
-                                    i = printByte(bw, sbLine, i, last & 0x00FF);
-                                    i = printByte(bw, sbLine, i, count);
-                                    count = 0;
-                                    n += 3;
-                                } else {
-                                    // Different byte
-                                    i = printByte(bw, sbLine, i, (last & 0xFF00) >> 8);
-                                    i = printByte(bw, sbLine, i, last & 0x00FF);
-                                    n += 2;
-                                }
-                            }
-                            last = current;
-                        }
-                    }
-                    if (count > 0) {
-                        i = printByte(bw, sbLine, i, (last & 0xFF00) >> 8 | 128);
-                        i = printByte(bw, sbLine, i, last & 0x00FF);
-                        i = printByte(bw, sbLine, i, count);
-                        n += 2;
-                    }
-                    else {
-                        // Different byte
-                        i = printByte(bw, sbLine, i, (last & 0xFF00) >> 8);
-                        i = printByte(bw, sbLine, i, last & 0x00FF);
-                        n++;
-                    }
-                    // End marker
-                    i = printByte(bw, sbLine, i, 128);
-                    i = printByte(bw, sbLine, i, 0);
-                    i = printByte(bw, sbLine, i, 0);
-                    n += 3;
-                    printLine(bw, sbLine.toString(), false);
-                    n += i;
-                    System.out.println("Compressed size: " + n);
-                }
-                else if (compression == MagellanExportDialog.COMPRESSION_META_2 || compression == MagellanExportDialog.COMPRESSION_META_4 || compression == MagellanExportDialog.COMPRESSION_META_8) {
-                    int size = compression == MagellanExportDialog.COMPRESSION_META_2 ? 2 : compression == MagellanExportDialog.COMPRESSION_META_4 ? 4 : 8;
-                    if (mapToSave.length % size != 0) {
-                        throw new Exception("Map height is not a multiple of " + compression);
-                    }
-                    if (mapToSave[0].length % size != 0) {
-                        throw new Exception("Map width is not a multiple of " + compression);
-                    }
-                    int height = mapToSave.length / size;
-                    int width = mapToSave[0].length / size;
-                    Map<String, MetaTile> metaTileLookup = new HashMap<>();
-                    MetaTile[][] metaTileMap = new MetaTile[height][width];
-                    int n = 0;
-                    for (int y = 0; y < height; y++) {
-                        for (int x = 0; x < width; x++) {
-                            StringBuilder keyBuffer = new StringBuilder();
-                            int[] tiles = new int[size * size];
-                            for (int y1 = 0; y1 < size; y1++) {
-                                for (int x1 = 0; x1 < size; x1++) {
-                                    int tile = mapToSave[y * size + y1][x * size + x1];
-                                    keyBuffer.append(Globals.toHexString(tile, 2));
-                                    tiles[y1 * size + x1] = tile;
-                                }
-                            }
-                            String key = keyBuffer.toString();
-                            MetaTile metaTile = metaTileLookup.get(key);
-                            if (metaTile == null) {
-                                metaTile = new MetaTile(n++, tiles);
-                                metaTileLookup.put(key, metaTile);
-                            }
-                            metaTileMap[y][x] = metaTile;
-                        }
-                    }
-                    System.out.println("Number of meta tiles: " + metaTileLookup.size());
-                    if (metaTileLookup.size() > 256) {
-                        throw new Exception("Cannot support more than 256 meta tiles (" + metaTileLookup.size() + " found)");
-                    }
-                    boolean first = true;
-                    n = 0;
-                    for (MetaTile[] row : metaTileMap) {
-                        for (MetaTile metaTile : row) {
-                            n = printByte(bw, sbLine, n, metaTile.getNumber(), first ? "MD" + m : null);
-                            first = false;
-                        }
-                    }
-                    printLine(bw, sbLine.toString(), false);
-                    if (includeComments) {
-                        printLine(bw, "****************************************", false);
-                        printLine(bw, "* Meta Tiles", false);
-                        printLine(bw, "****************************************", false);
-                    }
-                    ArrayList<MetaTile> metaTiles = new ArrayList<>(metaTileLookup.values());
-                    metaTiles.sort(Comparator.comparingInt(MetaTile::getNumber));
-                    for (MetaTile metaTile : metaTiles) {
-                        sbLine.delete(0, sbLine.length());
-                        n = 0;
-                        first = true;
-                        int[] tiles = metaTile.getTiles();
-                        for (int tile : tiles) {
-                            n = printByte(bw, sbLine, n, tile, first ? "MT" + m + Globals.padl(metaTile.getNumber(), 3) : null);
-                            first = false;
-                        }
-                        if (metaTile.getTiles().length < 8) {
-                            printLine(bw, sbLine.toString(), false);
-                        }
-                    }
-                }
-                else if (compression == MagellanExportDialog.COMPRESSION_NYBBLES) {
-                    String hexChunk;
-                    for (int y = 0; y < mapToSave.length; y++) {
-                        if (includeComments) {
-                            printLine(bw, "* -- Map Row " + y + " -- ", false);
-                        }
-                        for (int cl = 0; cl < Math.ceil((double) mapToSave[y].length / 16); cl++) {
-                            if (y == 0 && cl == 0) {
-                                sbLine.append("MD").append(m).append(":\n  DATA BYTE ");
-                            }
-                            else {
-                                sbLine.append("       DATA BYTE ");
-                            }
-                            for (int colpos = (cl * 16); colpos < Math.min((cl + 1) * 16, mapToSave[y].length); colpos++) {
-                                if (colpos % 4 == 0) {
-                                    if (colpos > (cl * 16)) {
-                                        sbLine.append(",");
-                                    }
-                                    sbLine.append("$");
-                                }
-                                int value = mapToSave[y][colpos];
-                                if (value >= 16) {
-                                    throw new RuntimeException("Compression mode not supported for characters >= 16");
-                                }
-                                hexChunk = value != MapCanvas.NOCHAR ? Integer.toHexString(value).toUpperCase() : "0";
-                                sbLine.append(hexChunk);
-                            }
-                            printLine(bw, sbLine.toString(), includeComments);
-                            sbLine.delete(0, sbLine.length());
-                        }
-                    }
-                }
-                else {
-                    throw new RuntimeException("Compression mode not yet supported.");
-                }
-                if (includeSpriteData) {
-                    writeSpriteLocations(includeComments, paletteMap, bw, m);
-                }
+                printLine(bw, lineBuffer.toString(), null);
             }
         }
     }
 
-    private void writeSpriteLocations(boolean includeComments, Map<ECMPalette, Integer> paletteMap, BufferedWriter bw, int m) throws IOException {
-        HashMap<Point, ArrayList<Integer>> spriteMap = mapEditor.getSpriteMap(m);
-        if (spriteMap.size() > 0) {
-            if (includeComments) {
-                printLine(bw, "****************************************", false);
-                printLine(bw, "* Sprite Locations", false);
-                printLine(bw, "****************************************", false);
+    // ---------- RLE-BYTE ----------
+
+    private void writeRleByteData(int[][] grid, int mapId, BufferedWriter bw) throws IOException {
+        int last = -1, run = 0, countOnLine = 0;
+        for (int[] row : grid) {
+            for (int cur : row) {
+                if (last >= 0) {
+                    if (cur == last && run < 255) {
+                        run++;
+                    } else {
+                        countOnLine = printRlePair(bw, lineBuffer, countOnLine, last | 0x80, run,
+                                                   countOnLine == 0 ? "MD" + mapId : null);
+                        run = 0;
+                    }
+                }
+                last = cur;
             }
-            boolean smallMap = mapEditor.getGridWidth() <= 32 && mapEditor.getGridHeight() <= 32;
+        }
+        // final flush
+        if (run > 0) {
+            countOnLine = printRlePair(bw, lineBuffer, countOnLine, last | 0x80, run,
+                                       countOnLine == 0 ? "MD" + mapId : null);
+        } else if (last >= 0) {
+            countOnLine = printByte(bw, lineBuffer, countOnLine, last,
+                                    countOnLine == 0 ? "MD" + mapId : null);
+        }
+        // end marker
+        countOnLine = printByte(bw, lineBuffer, countOnLine, 0x80, null);
+        countOnLine = printByte(bw, lineBuffer, countOnLine, 0x00, null);
+        printLine(bw, lineBuffer.toString(), null);
+    }
+
+    private int printRlePair(
+        BufferedWriter bw, StringBuilder buf,
+        int countOnLine, int value, int repeat, String label
+    ) throws IOException {
+        countOnLine = printByte(bw, buf, countOnLine, value, label);
+        return printByte(bw, buf, countOnLine, repeat, null);
+    }
+
+    // ---------- RLE-WORD ----------
+
+    private void writeRleWordData(int[][] grid, int mapId, BufferedWriter bw) throws IOException {
+        int last = -1, run = 0, countOnLine = 0;
+        for (int[] row : grid) {
+            for (int x = 0; x < row.length - 1; x += 2) {
+                int cur = (row[x] << 8) | row[x + 1];
+                if (last >= 0) {
+                    if (cur == last && run < 255) {
+                        run++;
+                    } else {
+                        // flush run
+                        countOnLine = printRleWordPair(bw, lineBuffer, countOnLine, last, run,
+                                                       countOnLine == 0 ? "MD" + mapId : null);
+                        run = 0;
+                    }
+                }
+                last = cur;
+            }
+        }
+        // final flush
+        if (run > 0) {
+            countOnLine = printRleWordPair(bw, lineBuffer, countOnLine, last, run,
+                                           countOnLine == 0 ? "MD" + mapId : null);
+        } else if (last >= 0) {
+            countOnLine = printByte(bw, lineBuffer, countOnLine, (last >> 8) & 0xFF,
+                                    countOnLine == 0 ? "MD" + mapId : null);
+            countOnLine = printByte(bw, lineBuffer, countOnLine, last & 0xFF, null);
+        }
+        // end marker (MSB + two zeros)
+        countOnLine = printByte(bw, lineBuffer, countOnLine, 0x80, null);
+        countOnLine = printByte(bw, lineBuffer, countOnLine, 0x00, null);
+        countOnLine = printByte(bw, lineBuffer, countOnLine, 0x00, null);
+        printLine(bw, lineBuffer.toString(), null);
+    }
+
+    private int printRleWordPair(
+        BufferedWriter bw, StringBuilder buf,
+        int countOnLine, int value, int repeat, String label
+    ) throws IOException {
+        // MSB of word + repeat
+        countOnLine = printByte(bw, buf, countOnLine, ((value >> 8) & 0xFF) | 0x80, label);
+        countOnLine = printByte(bw, buf, countOnLine, value & 0xFF, null);
+        return printByte(bw, buf, countOnLine, repeat, null);
+    }
+
+    // ---------- Meta-Tile ----------
+
+private void writeMetaTileData(
+    int blockSize,
+    int[][] mapGrid,
+    int mapId,
+    BufferedWriter bw,
+    boolean includeComments
+) throws Exception {
+    // ensure dimensions are multiples of the block size
+    if (mapGrid.length % blockSize != 0
+        || mapGrid[0].length % blockSize != 0) {
+        throw new Exception(
+            "Map dimensions must be a multiple of meta-tile size "
+            + blockSize
+        );
+    }
+
+    int metaRows = mapGrid.length  / blockSize;
+    int metaCols = mapGrid[0].length / blockSize;
+
+    // Deduplication lookup: key = concatenated hex of each sub-tile
+    Map<String,MetaTile> lookup = new LinkedHashMap<>();
+    MetaTile[][] metaGrid   = new MetaTile[metaRows][metaCols];
+    int nextMetaId = 0;
+
+    // Build & dedupe meta-tiles
+    for (int ry = 0; ry < metaRows; ry++) {
+        for (int cx = 0; cx < metaCols; cx++) {
+            StringBuilder keyBuilder = new StringBuilder(blockSize * blockSize * 2);
+            int[] block = new int[blockSize * blockSize];
+
+            for (int by = 0; by < blockSize; by++) {
+                for (int bx = 0; bx < blockSize; bx++) {
+                    int tile = mapGrid[ry*blockSize + by][cx*blockSize + bx];
+                    block[by*blockSize + bx] = tile;
+                    keyBuilder
+                        .append(Globals.toHexString(tile, 2));
+                }
+            }
+
+            String key = keyBuilder.toString();
+            MetaTile mt = lookup.get(key);
+            if (mt == null) {
+                mt = new MetaTile(nextMetaId++, block);
+                lookup.put(key, mt);
+            }
+            metaGrid[ry][cx] = mt;
+        }
+    }
+
+    if (lookup.size() > 256) {
+        throw new Exception(
+            "Cannot support more than 256 meta-tiles (found "
+            + lookup.size() + ")"
+        );
+    }
+
+    // Emit the meta-tile map (indices into the deduped set)
+    if (includeComments) {
+        printSectionHeader(bw, " Meta Tile Map");
+    }
+    writeMetaTileMap(bw, metaGrid, mapId);
+
+    // Emit the meta-tile definitions themselves
+    if (includeComments) {
+        printSectionHeader(bw, " Meta Tile Definitions");
+    }
+    writeMetaTileDefinitions(bw, lookup.values(), mapId, blockSize);
+}
+
+    private void writeMetaTileMap(
+        BufferedWriter bw, MetaTile[][] grid, int mapId
+    ) throws IOException {
+        int lineCount = 0;
+        boolean first = true;
+        for (MetaTile[] row : grid) {
+            for (MetaTile mt : row) {
+                lineCount = printByte(bw, lineBuffer, lineCount,
+                                      mt.getNumber(),
+                                      first ? "MD" + mapId : null);
+                first = false;
+            }
+        }
+        printLine(bw, lineBuffer.toString(), null);
+    }
+
+    private void writeMetaTileDefinitions(
+        BufferedWriter bw, Collection<MetaTile> tiles, int mapId, int blockSize
+    ) throws IOException {
+        List<MetaTile> list = new ArrayList<>(tiles);
+        list.sort(Comparator.comparingInt(MetaTile::getNumber));
+        for (MetaTile mt : list) {
+            lineBuffer.setLength(0);
+            int cnt = 0;
             boolean first = true;
-            List<Point> sortedPoints = new ArrayList<>(spriteMap.keySet());
-            sortedPoints.sort(Comparator.comparingInt(p -> ((Point) p).y).thenComparingInt(p -> ((Point) p).x));
-            for (Point p : sortedPoints) {
-                ArrayList<Integer> spriteList = spriteMap.get(p);
-                for (Integer spriteNum : spriteList) {
-                    int color = (colorMode == COLOR_MODE_GRAPHICS_1 || colorMode == COLOR_MODE_BITMAP) ? spriteColors[spriteNum] : paletteMap.get(ecmSpritePalettes[spriteNum]) * (colorMode == COLOR_MODE_ECM_3 ? 2 : 1);
-                    printLine(bw, (first ? "SL" + m + ":\n": "") +
-                            (smallMap ? "  DATA BYTE " + ((p.y - 1) & 0xFF) : "  DATA BYTE " + p.y) + "," + p.x + "," + spriteNum * 4 + "," + color, includeComments ? (first ? "y, x, pattern#, color#" : "") : null);
-                    first = false;
+            for (int t : mt.getTiles()) {
+                cnt = printByte(bw, lineBuffer, cnt, t,
+                                first ? "MT" + mapId + Globals.padl(mt.getNumber(), 3) : null);
+                first = false;
+            }
+            // pad up to 8
+            while (cnt < blockSize) {
+                cnt = printByte(bw, lineBuffer, cnt, 0, null);
+            }
+            printLine(bw, lineBuffer.toString(), null);
+        }
+    }
+
+    // ---------- NYBBLES ----------
+
+    private void writeNybblesData(
+        int[][] grid, int mapId,
+        BufferedWriter bw, boolean includeComments
+    ) throws IOException {
+        for (int y = 0; y < grid.length; y++) {
+            if (includeComments) {
+                printLine(bw, " -- Map Row " + y + " -- ", null);
+            }
+            int rowLen = grid[y].length;
+            for (int block = 0; block < Math.ceil((double) rowLen / 16); block++) {
+                lineBuffer.setLength(0);
+                String lbl = (y == 0 && block == 0) ? "MD" + mapId : "";
+                lineBuffer.append(lbl)
+                          .append(lbl.isEmpty() ? "" : ":")
+                          .append("  DATA BYTE ");
+                for (int x = block * 16; x < Math.min((block + 1) * 16, rowLen); x++) {
+                    int v = grid[y][x];
+                    if (v >= 16) {
+                        throw new RuntimeException("NYBBLES only supports <16");
+                    }
+                    String hex = (v == MapCanvas.NOCHAR)
+                                 ? "0"
+                                 : Integer.toHexString(v).toUpperCase();
+                    lineBuffer.append(hex)
+                              .append((x + 1) % 4 == 0 && x + 1 < (block + 1) * 16 ? "," : "");
                 }
+                printLine(bw, lineBuffer.toString(), null);
             }
         }
     }
+
+    // ---------- Sprite Locations ----------
+
+  private void writeSpriteLocations(
+      boolean includeComments,
+      Map<ECMPalette,Integer> paletteMap,
+      BufferedWriter bw,
+      int mapId
+  ) throws IOException {
+      Map<Point,ArrayList<Integer>> spr = mapEditor.getSpriteMap(mapId);
+      if (spr.isEmpty()) return;
+
+      if (includeComments) printSectionHeader(bw, " Sprite Locations");
+
+      boolean small = mapEditor.getGridWidth() <= 32
+                  && mapEditor.getGridHeight() <= 32;
+
+      // Build ordered points
+      List<Point> pts = new ArrayList<>(spr.keySet());
+      pts.sort(Comparator
+        .comparingInt((Point p) -> p.y)
+        .thenComparingInt(p -> p.x)
+      );
+
+      // inline comment only on first line
+      String comment = includeComments ? " ' y, x, pattern#, color#" : "";
+
+      // Prepare line-prefix strings
+      String firstLabel   = String.format("SL%d:%s\n  DATA BYTE ", mapId, comment);
+      int    prefixWidth  = firstLabel.length();
+      String otherLabel   = String.format("  DATA BYTE ", mapId);
+      String commaPattern = "%3d, %3d, %3d, %3d";  // y, x, pattern#, color#
+
+      boolean first = true;
+      for (Point p : pts) {
+        for (int sid : spr.get(p)) {
+          int yval   = small ? ((p.y - 1) & 0xFF) : p.y;
+          int color  = (colorMode == COLOR_MODE_GRAPHICS_1
+                    || colorMode == COLOR_MODE_BITMAP)
+                    ? spriteColors[sid]
+                    : paletteMap.get(ecmSpritePalettes[sid]) 
+                      * (colorMode == COLOR_MODE_ECM_3 ? 2 : 1);
+
+          String label = first ? firstLabel : otherLabel;
+          String row   = String.format(commaPattern,
+                            yval,
+                            p.x,
+                            sid * 4,
+                            color
+                          );
+
+          printLine(bw, label + row, null);
+
+          first = false;
+        }
+      }
+
+      // final blank line for readability
+      printLine(bw, "", null);
+  }
+
+    // ---------- Shared Chunk Writer ----------
+
+    private void writeHexChunks(
+        BufferedWriter bw,
+        String label,
+        String hex,
+        boolean includeComments,
+        int totalLength,
+        int lineSize,
+        String firstComment
+    ) throws IOException {
+        int len = totalLength;
+        for (int pos = 0; pos < len; pos += 2) {
+            if (pos % lineSize == 0) {
+                if (pos != 0) {
+                    printLine(bw, lineBuffer.toString(), includeComments ? firstComment : null);
+                }
+                lineBuffer.setLength(0);
+                lineBuffer.append(pos == 0 ? label + ":  DATA BYTE " : "        DATA BYTE ");
+            }
+            lineBuffer.append('$')
+                      .append(hex, pos, pos + 2)
+                      .append((pos % lineSize) < lineSize - 2 ? ", " : "");
+        }
+        // flush last
+        printLine(bw, lineBuffer.toString(), includeComments ? firstComment : null);
+   }
 }
